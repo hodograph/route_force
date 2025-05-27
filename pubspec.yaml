@@ -51,6 +51,8 @@ dependencies:
   cloud_functions: ^5.5.1
   firebase_app_check: ^0.3.2+6
   firebase_auth: ^5.5.4
+  flutter_native_splash: ^2.4.6
+  flutter_launcher_icons: ^0.14.3
 
 dev_dependencies:
   flutter_test:
@@ -62,6 +64,28 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+
+flutter_native_splash:
+  color: "#ffffff"
+  color_dark: "#1e1e1e"
+  image: assets/rf.png
+  image_dark: assets/rf.png
+
+  android_12:
+    image: assets/rf.png
+    image_dark: assets/rf.png
+
+flutter_launcher_icons:
+  image_path_android: "assets/rf.png"
+  image_path_ios: "assets/rf-bg.png"
+  image_path_ios_dark_transparent: "assets/rf.png"
+  remove_alpha_ios: true
+  android: true
+  ios: true
+  web:
+    generate: true
+    image_path: "assets/rf.png"
+    background_color: "#1e1e1e"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
