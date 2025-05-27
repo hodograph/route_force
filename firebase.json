@@ -1,0 +1,34 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "route-force",
+          "appId": "1:922250209867:android:aefcf89296b38a26a07bce",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "route-force",
+          "configurations": {
+            "android": "1:922250209867:android:aefcf89296b38a26a07bce",
+            "ios": "1:922250209867:ios:879dff97cca8a4fba07bce",
+            "web": "1:922250209867:web:12475858155488dba07bce"
+          }
+        }
+      }
+    }
+  },
+  "hosting": {
+    "source": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "frameworksBackend": {
+      "region": "us-central1"
+    }
+  }
+}

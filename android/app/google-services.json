@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "922250209867",
+    "project_id": "route-force",
+    "storage_bucket": "route-force.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:922250209867:android:aefcf89296b38a26a07bce",
+        "android_client_info": {
+          "package_name": "com.example.route_force"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "922250209867-9dpsv9j28s1jr93vr7jk2lstthsrgrga.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD9taoRxfxFPtYe-j1TnT4QysJrP9mrRuU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "922250209867-9dpsv9j28s1jr93vr7jk2lstthsrgrga.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "922250209867-jncq8oepqh4q584hgijf9v3bljqrktdc.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.routeForce"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
