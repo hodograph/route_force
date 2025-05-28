@@ -982,7 +982,8 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
         0.000025; // Approx 2.7 meters, adjust as needed
 
     do {
-      double effectiveDisplacementOrder = displacementRank + attempt as double;
+      double effectiveDisplacementOrder =
+          displacementRank.toDouble() + attempt.toDouble();
       double angle =
           angularSeed +
           effectiveDisplacementOrder *
