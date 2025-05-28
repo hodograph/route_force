@@ -1125,6 +1125,7 @@ class _TripViewerPageState extends State<TripViewerPage> {
 
     Widget detailsPanelWidget = SizedBox(
       width: 450, // Keep the fixed width
+      height: double.infinity,
       child: Card(
         elevation: 4.0,
         margin: EdgeInsets.zero, // Ensure card fills the SizedBox
