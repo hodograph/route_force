@@ -29,6 +29,7 @@ import 'package:route_force/utils/map_display_helpers.dart';
 import 'package:route_force/models/trip.dart'; // Import the Trip model
 
 import 'package:route_force/enums/travel_mode.dart' as travel_mode;
+import 'package:route_force/enums/unsaved_changes_action.dart';
 
 class TripPlannerApp extends StatefulWidget {
   final Trip? trip; // Optional Trip object for editing
@@ -103,6 +104,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
   String _initialTripName = ''; // To pre-fill trip name when saving/editing
   String? _tripOwnerId; // To store the UID of the trip's owner
 
+  bool _isDirty = false; // Flag to track unsaved changes
   // Helper method to generate a descriptive summary for a transit route option
   String _getTransitRouteSummary(RouteInfo routeInfo, int routeNumber) {
     // Priority 1: Use existing summary if it seems descriptive for transit
@@ -244,6 +246,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
   void initState() {
     super.initState();
     // Debug print
+    _isDirty = false; // Initialize dirty flag
     if (kDebugMode) {
       print("Initializing Trip Planner App");
     }
@@ -401,6 +404,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
       _initialTripName = trip.name;
       tripStartTime = trip.date; // Assuming Trip.date is the start time
 
+      _isDirty = false; // Reset dirty flag when loading a trip
       stops = trip.stops.map((s) => s.copyWith()).toList(); // Deep copy
       _tileControllers.clear();
       for (var stop in stops) {
@@ -889,6 +893,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
     setState(() {
       // Synchronous part
       stops.add(newStop);
+      _isDirty = true;
       _tileControllers[id] = newController; // Store controller
     });
 
@@ -925,6 +930,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
           departureName: newDepartureName,
           departurePosition: newDeparturePosition,
         );
+        _isDirty = true;
         updated = true;
       }
     });
@@ -943,6 +949,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
           clearDepartureName: true,
           clearDeparturePosition: true,
         );
+        _isDirty = true;
         updated = true;
       }
     });
@@ -1327,6 +1334,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
         if (_expandedStopId == id) {
           _expandedStopId = null;
         }
+        _isDirty = true;
         wasActuallyRemoved = true;
       }
     });
@@ -1347,6 +1355,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
           // Manual arrival time remains unaffected.
           clearManualDepartureTime: stops[index].manualDepartureTime != null,
         );
+        _isDirty = true;
       }
       // setState will trigger UI rebuild, which uses _computeScheduleDetails
     });
@@ -1382,6 +1391,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
     setState(() {
       final index = stops.indexWhere((s) => s.id == stopId);
       if (index == -1) return;
+      _isDirty = true;
 
       if (time == null) {
         // Clearing the manual arrival time for the stop
@@ -1520,6 +1530,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
             stops[index].manualArrivalTime != null &&
             stops[index].manualArrivalTime!.isAfter(time)) {
           stops[index] = stops[index].copyWith(clearManualArrivalTime: true);
+          _isDirty = true;
         }
       }
     });
@@ -1536,6 +1547,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
                 ? newNotes.trim()
                 : null;
         stops[index] = stops[index].copyWith(notes: processedNotes);
+        _isDirty = true;
       }
     });
   }
@@ -1546,6 +1558,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
       final index = stops.indexWhere((stop) => stop.id == id);
       if (index != -1) {
         stops[index] = stops[index].copyWith(travelMode: mode);
+        _isDirty = true;
         updated = true;
       }
     });
@@ -1563,6 +1576,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
       }
       final LocationStop item = stops.removeAt(oldIndex);
       stops.insert(newIndex, item);
+      _isDirty = true;
     });
     _triggerRouteAndMarkerUpdates();
   }
@@ -1921,6 +1935,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
       if (selectedRouteIndex < routeOptions.length) {
         setState(() {
           selectedRouteIndices[routeId] = selectedRouteIndex;
+          _isDirty = true;
         });
         _updateMapPolylines(); // Update all polylines based on new selection and expanded state
       }
@@ -2408,32 +2423,87 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
     return "";
   }
 
+  Future<bool> _onWillPop() async {
+    if (_isDirty) {
+      final result = await showDialog<UnsavedChangesAction>(
+        context: context,
+        builder:
+            (BuildContext context) => AlertDialog(
+              title: const Text('Unsaved Changes'),
+              content: const Text(
+                'You have unsaved changes. Do you want to save them before exiting?',
+              ),
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('Cancel'),
+                  onPressed:
+                      () => Navigator.of(
+                        context,
+                      ).pop(UnsavedChangesAction.cancel),
+                ),
+                TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.red.shade700,
+                  ),
+                  child: const Text('Discard'),
+                  onPressed:
+                      () => Navigator.of(
+                        context,
+                      ).pop(UnsavedChangesAction.discard),
+                ),
+                ElevatedButton(
+                  child: const Text('Save'),
+                  onPressed:
+                      () =>
+                          Navigator.of(context).pop(UnsavedChangesAction.save),
+                ),
+              ],
+            ),
+      );
+
+      if (result == null || result == UnsavedChangesAction.cancel) {
+        return false; // Don't pop
+      } else if (result == UnsavedChangesAction.discard) {
+        return true; // Pop
+      } else if (result == UnsavedChangesAction.save) {
+        final bool saveSuccessful = await _saveTripToFirestore();
+        return saveSuccessful; // Pop only if save was successful
+      }
+    }
+    return true; // Not dirty, allow pop
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Trip Planner'),
-        actions: [
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.layers), // Icon for map style selection
-            tooltip: "Select Map Style",
-            initialValue: _selectedMapStyleName,
-            onSelected: _selectMapStyle,
-            itemBuilder: (BuildContext context) {
-              return map_styles.availableMapStyles.keys.map((String styleName) {
-                return PopupMenuItem<String>(
-                  value: styleName,
-                  child: Text(styleName),
-                );
-              }).toList();
-            },
-          ),
-        ],
+    return WillPopScope(
+      onWillPop: _onWillPop,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Trip Planner'),
+          actions: [
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.layers), // Icon for map style selection
+              tooltip: "Select Map Style",
+              initialValue: _selectedMapStyleName,
+              onSelected: _selectMapStyle,
+              itemBuilder: (BuildContext context) {
+                return map_styles.availableMapStyles.keys.map((
+                  String styleName,
+                ) {
+                  return PopupMenuItem<String>(
+                    value: styleName,
+                    child: Text(styleName),
+                  );
+                }).toList();
+              },
+            ),
+          ],
+        ),
+        body:
+            ResponsiveBreakpoints.of(context).isDesktop
+                ? _buildDesktopLayout()
+                : _buildMobileLayout(),
       ),
-      body:
-          ResponsiveBreakpoints.of(context).isDesktop
-              ? _buildDesktopLayout()
-              : _buildMobileLayout(),
     );
   }
 
@@ -2687,15 +2757,16 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
     }
   }
 
-  Future<void> _saveTripToFirestore() async {
+  Future<bool> _saveTripToFirestore() async {
     final User? currentUser = FirebaseAuth.instance.currentUser;
     if (currentUser == null) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Please log in to save trips.')),
         );
+        return false;
       }
-      return;
+      return false;
     }
 
     if (stops.isEmpty) {
@@ -2703,8 +2774,9 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Add some stops before saving.')),
         );
+        return false;
       }
-      return;
+      return false;
     }
 
     // Ensure the current user (owner) is always in the participant list when saving
@@ -2751,8 +2823,9 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Trip not saved. Name is required.')),
         );
+        return false;
       }
-      return;
+      return false;
     }
 
     // Calculate trip end time
@@ -2792,6 +2865,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
             SnackBar(content: Text('Trip "$tripName" updated successfully!')),
           );
         }
+        _isDirty = false; // Reset dirty flag
       } else {
         // Add new trip
         final newDocRef = await FirebaseFirestore.instance
@@ -2806,12 +2880,14 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
             SnackBar(content: Text('Trip "$tripName" saved successfully!')),
           );
         }
+        _isDirty = false; // Reset dirty flag
       }
       if (mounted) {
         // Refresh the list of saved trips after saving
         _fetchSavedTrips();
         await _fetchParticipantDetails(); // Refresh participant details display
       }
+      return true;
     } catch (e) {
       if (kDebugMode) {
         print('Error saving trip: $e');
@@ -2821,6 +2897,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
           SnackBar(content: Text('Failed to save trip: ${e.toString()}')),
         );
       }
+      return false;
     }
   }
 
@@ -2872,6 +2949,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
     String tripDocId,
   ) async {
     if (!mounted) return;
+    _isDirty = false; // Reset dirty flag when loading a new trip
     setState(() => isLoading = true);
 
     try {
@@ -2906,6 +2984,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
           (tripData['participantUserIds'] as List<dynamic>?)?.cast<String>() ??
           []; // Load participant UIDs
       await _fetchParticipantDetails(); // Fetch details for loaded UIDs
+      _isDirty = false; // Explicitly reset again after all operations
       await _triggerRouteAndMarkerUpdates(); // This will recalculate routes and update map
     } catch (e) {
       if (kDebugMode) {
@@ -3105,6 +3184,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
                                     if (!_participantUserIds.contains(
                                       user['id']!,
                                     )) {
+                                      _isDirty = true;
                                       _participantUserIds.add(user['id']!);
                                       _participantUserDetails.add(user);
                                     }
@@ -3227,6 +3307,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
     setState(() {
       _participantUserIds.remove(userId);
       _participantUserDetails.removeWhere((detail) => detail['id'] == userId);
+      _isDirty = true;
     });
   }
 
