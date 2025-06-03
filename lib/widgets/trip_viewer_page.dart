@@ -20,6 +20,12 @@ import 'package:route_force/enums/travel_mode.dart' as travel_mode_enum;
 import 'package:route_force/utils/map_display_helpers.dart';
 import 'package:route_force/map_styles/map_style_definitions.dart'
     as map_styles;
+import 'package:screenshot/screenshot.dart';
+import 'package:share_plus/share_plus.dart';
+import 'dart:typed_data'; // For Uint8List
+import 'package:path_provider/path_provider.dart';
+import 'dart:io'; // For File
+import 'itinerary_export_widget.dart';
 
 class TripViewerPage extends StatefulWidget {
   final Trip trip;
@@ -53,6 +59,7 @@ class _TripViewerPageState extends State<TripViewerPage> {
   // --- State for Participants ---
   List<Map<String, String>> _participantUserDetails = [];
   bool _isLoadingParticipants = false;
+  final ScreenshotController _screenshotController = ScreenshotController();
 
   @override
   void initState() {
@@ -1063,6 +1070,89 @@ class _TripViewerPageState extends State<TripViewerPage> {
     );
   }
 
+  Future<void> _exportItineraryAsImage() async {
+    if (_stops.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot export an empty trip.')),
+      );
+      return;
+    }
+
+    // Show a loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return const Center(child: CircularProgressIndicator());
+      },
+    );
+
+    try {
+      final scheduleDetailsForExport = _computeScheduleDetails();
+
+      final Uint8List? imageBytes = await _screenshotController
+          .captureFromLongWidget(
+            InheritedTheme.captureAll(
+              context,
+              Material(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                child: ItineraryExportWidget(
+                  trip: widget.trip,
+                  scheduleDetails: scheduleDetailsForExport,
+                  routes: _routes,
+                  getTravelModeIcon: MapDisplayHelpers.getTravelModeIcon,
+                ),
+              ),
+            ),
+            context: context,
+            constraints: const BoxConstraints(
+              maxWidth: 720,
+            ), // Adjust width as needed
+            delay: const Duration(milliseconds: 500),
+            pixelRatio:
+                MediaQuery.of(context).devicePixelRatio * 1.5, // Higher quality
+          );
+
+      if (mounted) {
+        Navigator.pop(context); // Dismiss loading indicator
+      }
+
+      if (imageBytes != null) {
+        final directory = await getTemporaryDirectory();
+        final imagePath =
+            await File(
+              '${directory.path}/itinerary-${widget.trip.id}.png',
+            ).create();
+        await imagePath.writeAsBytes(imageBytes);
+
+        await SharePlus.instance.share(
+          ShareParams(
+            text: 'My trip itinerary: ${widget.trip.name}',
+            files: [XFile(imagePath.path)],
+          ),
+        );
+        // await Share.shareXFiles([
+        //   XFile(imagePath.path),
+        // ], text: 'My trip itinerary: ${widget.trip.name}');
+      } else {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to capture itinerary image.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) Navigator.pop(context); // Dismiss loading indicator on error
+      if (kDebugMode) {
+        print('Error exporting itinerary: $e');
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error exporting itinerary: ${e.toString()}')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDesktop = ResponsiveBreakpoints.of(context).isDesktop;
@@ -1083,6 +1173,11 @@ class _TripViewerPageState extends State<TripViewerPage> {
               );
             }).toList();
           },
+        ),
+        IconButton(
+          icon: const Icon(Icons.ios_share),
+          tooltip: 'Export Itinerary',
+          onPressed: _exportItineraryAsImage,
         ),
       ],
     );
