@@ -7,6 +7,8 @@ import 'package:route_force/models/route_info.dart';
 import 'package:route_force/models/scheduled_stop_info.dart';
 import 'travel_mode_button.dart';
 import 'directions_list.dart';
+import 'package:route_force/enums/distance_unit.dart'; // Import DistanceUnit
+import 'package:route_force/utils/distance_utils.dart'; // Import DistanceUtils
 
 class StopDetailsContent extends StatefulWidget {
   final LocationStop stop;
@@ -27,6 +29,7 @@ class StopDetailsContent extends StatefulWidget {
   final IconData Function(String? vehicleType) getTransitVehicleIconFunction;
   final String Function(String htmlString) stripHtmlFunction;
   final LocationStop? prevStop;
+  final DistanceUnit currentDistanceUnit; // Added
   final Function(String stopId, String? notes) onUpdateStopNotes;
 
   const StopDetailsContent({
@@ -48,6 +51,7 @@ class StopDetailsContent extends StatefulWidget {
     required this.getTransitVehicleIconFunction,
     required this.stripHtmlFunction,
     this.prevStop,
+    required this.currentDistanceUnit, // Added
     required this.onUpdateStopNotes,
   });
 
@@ -574,15 +578,16 @@ class _StopDetailsContentState extends State<StopDetailsContent> {
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
-                                    '$summaryDisplay (${routeOpt.duration}, ${routeOpt.distance})',
+                                    '$summaryDisplay (${routeOpt.duration}, ${DistanceUtils.formatDistance(routeOpt.distanceInMeters, widget.currentDistanceUnit)})',
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                 ),
                               ],
                             );
                           } else {
+                            // Use currentDistanceUnit here
                             itemChild = Text(
-                              '$summaryDisplay (${routeOpt.duration}, ${routeOpt.distance})',
+                              '$summaryDisplay (${routeOpt.duration}, ${DistanceUtils.formatDistance(routeOpt.distanceInMeters, widget.currentDistanceUnit)})',
                             );
                           }
                           return DropdownMenuItem<int>(
@@ -631,6 +636,8 @@ class _StopDetailsContentState extends State<StopDetailsContent> {
                       getManeuverIconData: widget.getManeuverIconDataFunction,
                       getTransitVehicleIcon:
                           widget.getTransitVehicleIconFunction,
+                      currentDistanceUnit:
+                          widget.currentDistanceUnit, // Pass down
                       stripHtmlIfNeeded: widget.stripHtmlFunction,
                       primaryColor: Theme.of(context).highlightColor,
                     ),

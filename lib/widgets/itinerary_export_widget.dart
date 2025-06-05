@@ -4,6 +4,8 @@ import 'package:route_force/models/trip.dart';
 import 'package:route_force/models/scheduled_stop_info.dart';
 import 'package:route_force/models/route_info.dart';
 import 'package:route_force/enums/travel_mode.dart' as travel_mode_enum;
+import 'package:route_force/enums/distance_unit.dart'; // Import DistanceUnit
+import 'package:route_force/utils/distance_utils.dart'; // Import DistanceUtils
 
 class ItineraryExportWidget extends StatelessWidget {
   final Trip trip;
@@ -11,6 +13,7 @@ class ItineraryExportWidget extends StatelessWidget {
   final Map<String, RouteInfo>
   routes; // Changed from List<RouteInfo> to single RouteInfo
   final IconData Function(travel_mode_enum.TravelMode mode) getTravelModeIcon;
+  final DistanceUnit currentDistanceUnit; // Added
 
   const ItineraryExportWidget({
     super.key,
@@ -18,6 +21,7 @@ class ItineraryExportWidget extends StatelessWidget {
     required this.scheduleDetails,
     required this.routes,
     required this.getTravelModeIcon,
+    required this.currentDistanceUnit, // Added
   });
 
   String _getStopScheduleSummary(ScheduledStopInfo scheduledStop) {
@@ -135,7 +139,7 @@ class ItineraryExportWidget extends StatelessWidget {
                               ),
                               const SizedBox(width: 6),
                               Text(
-                                'Travel: ${routeToThisStop.duration} (${routeToThisStop.distance})',
+                                'Travel: ${routeToThisStop.duration} (${DistanceUtils.formatDistance(routeToThisStop.distanceInMeters, currentDistanceUnit)})',
                                 style: theme.textTheme.bodySmall,
                               ),
                             ],

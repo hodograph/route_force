@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:route_force/map_styles/map_style_definitions.dart'
     as map_styles;
+import 'package:route_force/enums/distance_unit.dart'; // Import DistanceUnit
 import 'package:route_force/widgets/home_page.dart';
 
 Future<void> _createUserDocumentIfNotExists(User user) async {
@@ -27,6 +28,11 @@ Future<void> _createUserDocumentIfNotExists(User user) async {
         'photoURL': user.photoURL,
         'createdAt': FieldValue.serverTimestamp(),
         'lastMapStyle': map_styles.styleStandardName, // Default map style
+        'distanceUnit':
+            DistanceUnit.kilometers
+                .toString()
+                .split('.')
+                .last, // Default distance unit
       });
     } catch (e) {
       // You might want to add more robust error handling or logging here
@@ -63,7 +69,7 @@ class AuthGate extends StatelessWidget {
                 clientId:
                     "922250209867-9dpsv9j28s1jr93vr7jk2lstthsrgrga.apps.googleusercontent.com",
               ),
-              AppleProvider()
+              AppleProvider(),
             ],
             headerBuilder: (context, constraints, shrinkOffset) {
               return Padding(

@@ -28,6 +28,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:route_force/utils/map_display_helpers.dart';
 import 'package:route_force/models/trip.dart'; // Import the Trip model
 
+import 'package:route_force/enums/distance_unit.dart'; // Import DistanceUnit
+import 'package:route_force/utils/distance_utils.dart'; // Import DistanceUtils
 import 'package:route_force/enums/travel_mode.dart' as travel_mode;
 import 'package:route_force/enums/unsaved_changes_action.dart';
 
@@ -105,6 +107,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
   String? _tripOwnerId; // To store the UID of the trip's owner
 
   bool _isDirty = false; // Flag to track unsaved changes
+  DistanceUnit _currentDistanceUnit = DistanceUnit.kilometers; // Default
   // Helper method to generate a descriptive summary for a transit route option
   String _getTransitRouteSummary(RouteInfo routeInfo, int routeNumber) {
     // Priority 1: Use existing summary if it seems descriptive for transit
@@ -261,6 +264,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
       // Load user preferences first, so _selectedMapStyleName is up-to-date
       // before the map potentially initializes or other location-dependent logic runs.
       await _loadUserPreferences();
+      await _loadDistanceUnitPreference();
 
       _getCurrentLocation();
 
@@ -364,6 +368,37 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
           print("Error loading user map style preference: $e");
         }
         // Keep default style, optionally inform user via SnackBar
+      }
+    }
+  }
+
+  Future<void> _loadDistanceUnitPreference() async {
+    final User? currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null && !currentUser.isAnonymous) {
+      try {
+        final userDoc =
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(currentUser.uid)
+                .get();
+        if (userDoc.exists && userDoc.data() != null) {
+          final data = userDoc.data()!;
+          if (data.containsKey('distanceUnit')) {
+            final String? unitStr = data['distanceUnit'] as String?;
+            if (unitStr != null) {
+              if (mounted) {
+                setState(() {
+                  _currentDistanceUnit = DistanceUnit.values.firstWhere(
+                    (e) => e.toString().split('.').last == unitStr,
+                    orElse: () => DistanceUnit.kilometers,
+                  );
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        if (kDebugMode) print("Error loading distance unit preference: $e");
       }
     }
   }
@@ -768,8 +803,12 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
 
             routeOptions.add(
               RouteInfo(
-                distance: routeMap['distance'] as String? ?? 'N/A',
-                duration: routeMap['duration'] as String? ?? 'N/A',
+                distanceInMeters:
+                    int.tryParse(routeMap['distance'] as String? ?? "0") ??
+                    0, // Expecting this from CF
+                duration:
+                    routeMap['durationText'] as String? ??
+                    'N/A', // Assuming CF provides durationText
                 polylinePoints: polylineCoordinates,
                 steps: steps,
                 summary: routeMap['summary'] as String?,
@@ -867,7 +906,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
     // The travel mode *to* a stop `n` is stored in `stops[n].travelMode`.
     // So, for a new stop being added at the end, its travel mode should
     // be based on the travel mode of the *current* last stop (which will become the second to last).
-    if (stops.isNotEmpty) {
+    if (stops.isNotEmpty && stops.last.travelMode != null) {
       defaultTravelMode = stops.last.travelMode;
     }
 
@@ -1209,7 +1248,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
     }
   }
 
-  Future<void> _calculateRoutes() async {
+  Future<void> _calculateRoutesOld() async {
     if (stops.length < 2) {
       setState(() {
         routes.clear();
@@ -1314,12 +1353,133 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
     _updateMapPolylines(); // Centralized polyline drawing
   }
 
+  Future<void> _calculateRoutes() async {
+    if (stops.length < 2) {
+      if (mounted) {
+        setState(() {
+          routes.clear();
+          selectedRouteIndices.clear();
+          _polylines.clear();
+          _routeLabelMarkers.clear();
+          isLoading = false;
+        });
+      }
+      return;
+    }
+
+    if (mounted) setState(() => isLoading = true);
+
+    List<Map<String, dynamic>> stopsPayload = [];
+    for (int i = 0; i < stops.length; i++) {
+      final stop = stops[i];
+      String travelModeToNext =
+          "DRIVE"; // Default or for the last conceptual segment
+      if (i < stops.length - 1) {
+        // The travelMode of stops[i+1] is the mode from stops[i] to stops[i+1]
+        travelModeToNext =
+            stops[i + 1].travelMode.toString().split('.').last.toUpperCase();
+      }
+
+      stopsPayload.add({
+        'id': stop.id,
+        'latitude': stop.position.latitude,
+        'longitude': stop.position.longitude,
+        'departureLatitude': stop.departurePosition?.latitude,
+        'departureLongitude': stop.departurePosition?.longitude,
+        'durationMinutes': stop.durationMinutes,
+        'travelModeToNextStop':
+            travelModeToNext, // This is for the segment originating FROM this stop
+        'manualArrivalTime': stop.manualArrivalTime?.toUtc().toIso8601String(),
+        'manualDepartureTime':
+            stop.manualDepartureTime?.toUtc().toIso8601String(),
+      });
+    }
+
+    final requestData = {
+      'stops': stopsPayload,
+      'tripStartTime': tripStartTime.toUtc().toIso8601String(),
+    };
+
+    Map<String, List<RouteInfo>> newRoutes = {};
+    Map<String, int> newSelectedRouteIndices = {};
+
+    try {
+      final HttpsCallable callable = _functions.httpsCallable(
+        'getMultipleDirections',
+      );
+      final HttpsCallableResult result = await callable
+          .call<Map<String, dynamic>>(requestData);
+
+      if (result.data != null && result.data['allSegmentRoutes'] is List) {
+        final List<dynamic> allSegmentRoutesData =
+            result.data['allSegmentRoutes'];
+        for (var segmentResult in allSegmentRoutesData) {
+          if (segmentResult is Map) {
+            final String routeId = segmentResult['routeId'] as String;
+            final List<dynamic> optionsData =
+                segmentResult['options'] as List<dynamic>? ?? [];
+            if (segmentResult['error'] != null) {
+              if (kDebugMode)
+                print(
+                  "Error for segment $routeId from CF: ${segmentResult['error']}",
+                );
+              // Optionally, handle this error more visibly in the UI for that segment
+            }
+
+            List<RouteInfo> routeOptions = [];
+            for (var routeMap in optionsData) {
+              if (routeMap is! Map) continue;
+              Map<String, dynamic> routeMapSD = routeMap.map(
+                (key, value) => MapEntry(key.toString(), value),
+              );
+              PolylinePoints polylinePoints = PolylinePoints();
+              List<LatLng> polylineCoordinates =
+                  (routeMapSD['encodedPolyline'] != null)
+                      ? polylinePoints
+                          .decodePolyline(
+                            routeMapSD['encodedPolyline'] as String,
+                          )
+                          .map((p) => LatLng(p.latitude, p.longitude))
+                          .toList()
+                      : [];
+              routeOptions.add(
+                RouteInfo.fromJson(routeMapSD, polylineCoordinates),
+              );
+            }
+            newRoutes[routeId] = routeOptions;
+            newSelectedRouteIndices[routeId] =
+                selectedRouteIndices[routeId] ?? 0;
+            if (newSelectedRouteIndices[routeId]! >= routeOptions.length) {
+              newSelectedRouteIndices[routeId] = 0;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      if (kDebugMode)
+        print("Error calling getMultipleDirections Firebase Function: $e");
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error calculating routes: ${e.toString()}')),
+        );
+    }
+
+    if (mounted) {
+      setState(() {
+        routes = newRoutes; // Update the state variable
+        selectedRouteIndices =
+            newSelectedRouteIndices; // Update the state variable
+        isLoading = false;
+      });
+    }
+    _updateMapPolylines();
+  }
+
   // Helper method to consolidate asynchronous updates after state changes
   Future<void> _triggerRouteAndMarkerUpdates() async {
     if (!mounted) return;
-    await _updateMarkers(); // Calls setState internally for markers
-    await _calculateRoutes(); // Calls setState internally for routes and isLoading
-    // _updateMapPolylines(); // Already called by _calculateRoutes
+    await _updateMarkers();
+    await _calculateRoutes();
   }
 
   void _removeStop(String id) {
@@ -2591,7 +2751,8 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
           getStopOpeningHoursWarningFunction: _getStopOpeningHoursWarning,
           onSaveTrip: _saveTripToFirestore,
           // --- Pass saved trips data and callbacks ---
-          onUpdateStopNotes: _updateStopNotes,
+          currentDistanceUnit: _currentDistanceUnit, // Pass down
+          onUpdateStopNotes: _updateStopNotes, // Pass down
           savedTrips: _savedTrips,
           isLoadingSavedTrips: _isLoadingSavedTrips,
           onLoadTrip: _loadTrip,
@@ -3363,7 +3524,8 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
       getStopOpeningHoursWarningFunction: _getStopOpeningHoursWarning,
       onSaveTrip: _saveTripToFirestore, // Pass the save function
       // --- Pass saved trips data and callbacks ---
-      onUpdateStopNotes: _updateStopNotes,
+      currentDistanceUnit: _currentDistanceUnit, // Pass down
+      onUpdateStopNotes: _updateStopNotes, // Pass down
       savedTrips: _savedTrips,
       isLoadingSavedTrips: _isLoadingSavedTrips,
       onLoadTrip: _loadTrip,
@@ -3383,6 +3545,7 @@ class _TripPlannerAppState extends State<TripPlannerApp> {
       getManeuverIconData: MapDisplayHelpers.getManeuverIconData,
       getTransitVehicleIcon: MapDisplayHelpers.getTransitVehicleIcon,
       stripHtmlIfNeeded: MapDisplayHelpers.stripHtmlIfNeeded,
+      currentDistanceUnit: _currentDistanceUnit,
       primaryColor:
           Theme.of(
             context,

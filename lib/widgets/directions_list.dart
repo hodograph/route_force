@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:route_force/enums/distance_unit.dart'; // Import DistanceUnit
+import 'package:route_force/utils/distance_utils.dart'; // Import DistanceUtils
 
 class DirectionsList extends StatelessWidget {
   final List<dynamic> steps;
@@ -6,6 +8,7 @@ class DirectionsList extends StatelessWidget {
   final IconData Function(String? vehicleType) getTransitVehicleIcon;
   final String Function(String htmlString) stripHtmlIfNeeded;
   final Color primaryColor;
+  final DistanceUnit currentDistanceUnit; // Added
 
   const DirectionsList({
     super.key,
@@ -14,6 +17,7 @@ class DirectionsList extends StatelessWidget {
     required this.getTransitVehicleIcon,
     required this.stripHtmlIfNeeded,
     required this.primaryColor,
+    required this.currentDistanceUnit, // Added
   });
 
   @override
@@ -31,8 +35,15 @@ class DirectionsList extends StatelessWidget {
         const SizedBox(height: 8),
         ...steps.map((step) {
           String instruction = step['html_instructions'] ?? 'No instruction';
-          String distanceText = step['distance']?['text'] ?? '';
-          String durationText = step['duration']?['text'] ?? '';
+          // Assuming step structure from Google Directions API or similar
+          int distanceValueInMeters = step['distance'] as int? ?? 0;
+          String formattedDistanceText = DistanceUtils.formatDistance(
+            distanceValueInMeters,
+            currentDistanceUnit,
+          );
+          String durationText =
+              step['durationText'] as String? ??
+              ''; // Expect durationText from CF
           String maneuver = step['maneuver'] ?? '';
           Map? transitDetails = step['transit_details'] as Map?;
 
@@ -59,11 +70,12 @@ class DirectionsList extends StatelessWidget {
                           fontWeight: FontWeight.w500,
                         ),
                       ),
-                      if (distanceText.isNotEmpty || durationText.isNotEmpty)
+                      if (formattedDistanceText.isNotEmpty ||
+                          durationText.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.only(top: 4.0),
                           child: Text(
-                            '$distanceText${distanceText.isNotEmpty && durationText.isNotEmpty ? "  •  " : ""}$durationText',
+                            '$formattedDistanceText${formattedDistanceText.isNotEmpty && durationText.isNotEmpty ? "  •  " : ""}$durationText',
                             style: TextStyle(
                               fontSize: 14,
                               color: secondaryTextColor,

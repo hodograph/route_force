@@ -20,6 +20,8 @@ import 'package:route_force/enums/travel_mode.dart' as travel_mode_enum;
 import 'package:route_force/utils/map_display_helpers.dart';
 import 'package:route_force/map_styles/map_style_definitions.dart'
     as map_styles;
+import 'package:route_force/enums/distance_unit.dart'; // Import DistanceUnit
+import 'package:route_force/utils/distance_utils.dart'; // Import DistanceUtils
 import 'package:screenshot/screenshot.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:typed_data'; // For Uint8List
@@ -56,6 +58,7 @@ class _TripViewerPageState extends State<TripViewerPage> {
   Map<String, ExpansionTileController> _tileControllers = {};
   String? _expandedStopId;
 
+  DistanceUnit _currentDistanceUnit = DistanceUnit.kilometers; // Default
   // --- State for Participants ---
   List<Map<String, String>> _participantUserDetails = [];
   bool _isLoadingParticipants = false;
@@ -66,6 +69,7 @@ class _TripViewerPageState extends State<TripViewerPage> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
+      await _loadDistanceUnitPreference(); // Load distance unit pref
       await _loadUserPreferences(); // Load preferences first
       await _loadTripData(); // Then load trip data which might use map
     });
@@ -140,6 +144,38 @@ class _TripViewerPageState extends State<TripViewerPage> {
             "Error loading user map style preference in TripViewerPage: $e",
           );
         }
+      }
+    }
+  }
+
+  Future<void> _loadDistanceUnitPreference() async {
+    final User? currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser != null && !currentUser.isAnonymous) {
+      try {
+        final userDoc =
+            await FirebaseFirestore.instance
+                .collection('users')
+                .doc(currentUser.uid)
+                .get();
+        if (userDoc.exists && userDoc.data() != null) {
+          final data = userDoc.data()!;
+          if (data.containsKey('distanceUnit')) {
+            final String? unitStr = data['distanceUnit'] as String?;
+            if (unitStr != null) {
+              if (mounted) {
+                setState(() {
+                  _currentDistanceUnit = DistanceUnit.values.firstWhere(
+                    (e) => e.toString().split('.').last == unitStr,
+                    orElse: () => DistanceUnit.kilometers,
+                  );
+                });
+              }
+            }
+          }
+        }
+      } catch (e) {
+        if (kDebugMode)
+          print("Error loading distance unit preference in viewer: $e");
       }
     }
   }
@@ -492,6 +528,7 @@ class _TripViewerPageState extends State<TripViewerPage> {
           _scheduleDetails = _computeScheduleDetails();
         });
       }
+      _focusMapOnTrip();
       return;
     }
 
@@ -499,7 +536,6 @@ class _TripViewerPageState extends State<TripViewerPage> {
     Set<Polyline> newPolylines = {};
     final List<Color> baseRouteColors = [
       Colors.blue,
-      Colors.red,
       Colors.green,
       Colors.purple,
       Colors.orange,
@@ -507,74 +543,110 @@ class _TripViewerPageState extends State<TripViewerPage> {
 
     DateTime currentExpectedArrivalTimeForNextStop = _tripStartTime;
     if (_stops.isNotEmpty && _stops.first.manualArrivalTime != null) {
-      currentExpectedArrivalTimeForNextStop = _stops.first.manualArrivalTime!;
+      // This line was: currentExpectedArrivalTimeForNextStop = _stops.first.manualArrivalTime!;
+      // The CF will handle the timing logic based on tripStartTime and manual times.
     }
 
-    for (int i = 0; i < _stops.length - 1; i++) {
-      final currentStop = _stops[i];
-      final nextStop = _stops[i + 1];
-      final routeId = '${currentStop.id}-${nextStop.id}';
-
-      DateTime actualArrivalTimeAtCurrentStop;
-      if (currentStop.manualArrivalTime != null) {
-        actualArrivalTimeAtCurrentStop = currentStop.manualArrivalTime!;
-      } else {
-        actualArrivalTimeAtCurrentStop = currentExpectedArrivalTimeForNextStop;
+    List<Map<String, dynamic>> stopsPayload = [];
+    for (int i = 0; i < _stops.length; i++) {
+      final stop = _stops[i];
+      String travelModeToNext = "DRIVE"; // Default
+      if (i < _stops.length - 1) {
+        travelModeToNext =
+            _stops[i + 1].travelMode.toString().split('.').last.toUpperCase();
       }
+      stopsPayload.add({
+        'id': stop.id,
+        'latitude': stop.position.latitude,
+        'longitude': stop.position.longitude,
+        'departureLatitude': stop.departurePosition?.latitude,
+        'departureLongitude': stop.departurePosition?.longitude,
+        'durationMinutes': stop.durationMinutes,
+        'travelModeToNextStop': travelModeToNext,
+        'manualArrivalTime': stop.manualArrivalTime?.toUtc().toIso8601String(),
+        'manualDepartureTime':
+            stop.manualDepartureTime?.toUtc().toIso8601String(),
+      });
+    }
 
-      DateTime departureTimeForThisSegment;
-      if (currentStop.manualDepartureTime != null) {
-        departureTimeForThisSegment = currentStop.manualDepartureTime!;
-        if (departureTimeForThisSegment.isBefore(
-          actualArrivalTimeAtCurrentStop,
-        )) {
-          departureTimeForThisSegment = actualArrivalTimeAtCurrentStop.add(
-            Duration(minutes: currentStop.durationMinutes),
-          );
-        }
-      } else {
-        departureTimeForThisSegment = actualArrivalTimeAtCurrentStop.add(
-          Duration(minutes: currentStop.durationMinutes),
-        );
-      }
+    final requestData = {
+      'stops': stopsPayload,
+      'tripStartTime': _tripStartTime.toUtc().toIso8601String(),
+    };
 
-      final List<RouteInfo>? routeOptions = await _getDirections(
-        currentStop.effectiveDeparturePosition,
-        nextStop.position,
-        nextStop.travelMode, // Travel mode TO nextStop
-        departureTime: departureTimeForThisSegment,
+    try {
+      final HttpsCallable callable = _functions.httpsCallable(
+        'getMultipleDirections',
       );
+      final HttpsCallableResult result = await callable
+          .call<Map<String, dynamic>>(requestData);
 
-      if (routeOptions != null && routeOptions.isNotEmpty) {
-        int selectedIdx = _selectedRouteIndices[routeId] ?? 0;
-        if (selectedIdx >= routeOptions.length) selectedIdx = 0;
+      if (result.data != null && result.data['allSegmentRoutes'] is List) {
+        final List<dynamic> allSegmentRoutesData =
+            result.data['allSegmentRoutes'];
+        int routeColorIndex = 0;
+        for (var segmentResult in allSegmentRoutesData) {
+          if (segmentResult is Map) {
+            final String routeId = segmentResult['routeId'] as String;
+            final List<dynamic> optionsData =
+                segmentResult['options'] as List<dynamic>? ?? [];
 
-        final selectedRoute = routeOptions[selectedIdx];
-        newRoutes[routeId] = selectedRoute;
+            if (optionsData.isNotEmpty) {
+              int selectedIdx = _selectedRouteIndices[routeId] ?? 0;
+              if (selectedIdx >= optionsData.length) selectedIdx = 0;
 
-        newPolylines.add(
-          Polyline(
-            polylineId: PolylineId(routeId),
-            points: selectedRoute.polylinePoints,
-            color: baseRouteColors[i % baseRouteColors.length],
-            width: 5,
-          ),
-        );
-        currentExpectedArrivalTimeForNextStop = departureTimeForThisSegment.add(
-          Duration(minutes: _parseDurationString(selectedRoute.duration)),
-        );
-      } else {
-        currentExpectedArrivalTimeForNextStop = departureTimeForThisSegment;
+              final Map selectedRouteMap = optionsData[selectedIdx];
+              final Map<String, dynamic> selectedRouteMapSD = selectedRouteMap
+                  .map((key, value) => MapEntry(key.toString(), value));
+              PolylinePoints polylinePoints = PolylinePoints();
+              List<LatLng> polylineCoordinates =
+                  (selectedRouteMapSD['encodedPolyline'] != null)
+                      ? polylinePoints
+                          .decodePolyline(
+                            selectedRouteMapSD['encodedPolyline'] as String,
+                          )
+                          .map((p) => LatLng(p.latitude, p.longitude))
+                          .toList()
+                      : [];
+
+              final selectedRouteInfo = RouteInfo.fromJson(
+                selectedRouteMapSD,
+                polylineCoordinates,
+              );
+              newRoutes[routeId] = selectedRouteInfo;
+
+              newPolylines.add(
+                Polyline(
+                  polylineId: PolylineId(routeId),
+                  points: selectedRouteInfo.polylinePoints,
+                  color:
+                      baseRouteColors[routeColorIndex % baseRouteColors.length],
+                  width: 5,
+                ),
+              );
+              routeColorIndex++;
+            }
+          }
+        }
       }
+    } catch (e) {
+      if (kDebugMode)
+        print("Error calling getMultipleDirections in TripViewer: $e");
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error calculating routes: ${e.toString()}')),
+        );
     }
 
     if (mounted) {
       setState(() {
         _routes = newRoutes;
         _polylines = newPolylines;
-        _scheduleDetails = _computeScheduleDetails();
+        _scheduleDetails =
+            _computeScheduleDetails(); // Recompute schedule with new route durations
       });
     }
+    _focusMapOnTrip();
   }
 
   List<ScheduledStopInfo> _computeScheduleDetails() {
@@ -646,6 +718,27 @@ class _TripViewerPageState extends State<TripViewerPage> {
     return schedule;
   }
 
+  void _focusMapOnTrip() {
+    if (_mapController != null && _stops.isNotEmpty) {
+      final Set<LatLng> uniquePointsSet = {};
+      for (final stop in _stops) {
+        uniquePointsSet.add(stop.position);
+        if (stop.departurePosition != null &&
+            stop.departurePosition != stop.position) {
+          uniquePointsSet.add(stop.departurePosition!);
+        }
+      }
+      final List<LatLng> uniquePoints = uniquePointsSet.toList();
+
+      if (uniquePoints.isNotEmpty) {
+        final LatLngBounds bounds = _calculateBounds(uniquePoints);
+        _mapController!.animateCamera(
+          CameraUpdate.newLatLngBounds(bounds, 75.0), // 75.0 padding
+        );
+      }
+    }
+  }
+
   String _getStopScheduleSummary(int stopIndex) {
     if (stopIndex < 0 || stopIndex >= _scheduleDetails.length) {
       return 'Schedule N/A';
@@ -664,100 +757,6 @@ class _TripViewerPageState extends State<TripViewerPage> {
   // (Include _getDirections, _parseDurationString, _formatDurationFromSecondsString,
   // _formatDistanceMeters, _getTravelModeIcon, _getManeuverIconData,
   // _getTransitVehicleIcon, _stripHtmlIfNeeded, _buildStepList)
-
-  Future<List<RouteInfo>?> _getDirections(
-    LatLng origin,
-    LatLng destination,
-    travel_mode_enum.TravelMode mode, {
-    DateTime? departureTime,
-  }) async {
-    String travelModeStr;
-    // Ensure travelModeStr matches what the Cloud Function expects
-    switch (mode) {
-      case travel_mode_enum.TravelMode.driving:
-        travelModeStr = 'DRIVE'; // Matches CF
-        break;
-      case travel_mode_enum.TravelMode.walking:
-        travelModeStr = 'WALK'; // Matches CF
-        break;
-      case travel_mode_enum.TravelMode.bicycling:
-        travelModeStr = 'BICYCLE'; // Matches CF
-        break;
-      case travel_mode_enum.TravelMode.transit:
-        travelModeStr = 'TRANSIT'; // Matches CF
-        break;
-    }
-
-    final Map<String, dynamic> params = {
-      'origin': {'latitude': origin.latitude, 'longitude': origin.longitude},
-      'destination': {
-        'latitude': destination.latitude,
-        'longitude': destination.longitude,
-      },
-      'travelMode': travelModeStr,
-    };
-
-    if (departureTime != null) {
-      params['departureTime'] = departureTime.toUtc().toIso8601String();
-    }
-
-    try {
-      final HttpsCallable callable = _functions.httpsCallable('getDirections');
-      final HttpsCallableResult result = await callable.call<List<dynamic>>(
-        params,
-      );
-
-      if (result.data != null && result.data is List) {
-        final List<dynamic> routesData = result.data as List<dynamic>;
-        if (routesData.isNotEmpty) {
-          List<RouteInfo> routeOptions = [];
-          for (var routeMap in routesData) {
-            if (routeMap is! Map) continue;
-
-            final String? encodedPolyline =
-                routeMap['encodedPolyline'] as String?;
-            PolylinePoints polylinePoints = PolylinePoints();
-            List<LatLng> polylineCoordinates = [];
-            if (encodedPolyline != null) {
-              polylineCoordinates =
-                  polylinePoints
-                      .decodePolyline(encodedPolyline)
-                      .map((p) => LatLng(p.latitude, p.longitude))
-                      .toList();
-            }
-
-            // The Cloud Function now transforms steps to match Flutter's expectation
-            final List<dynamic> steps =
-                (routeMap['steps'] as List<dynamic>?) ?? [];
-
-            routeOptions.add(
-              RouteInfo(
-                distance: routeMap['distance'] as String? ?? 'N/A',
-                duration: routeMap['duration'] as String? ?? 'N/A',
-                polylinePoints: polylineCoordinates,
-                steps: steps,
-                summary: routeMap['summary'] as String?,
-              ),
-            );
-          }
-          return routeOptions.isNotEmpty ? routeOptions : null;
-        } else {
-          if (kDebugMode) {
-            print(
-              'Directions Function (TripViewer): No routes found or unexpected response format.',
-            );
-          }
-        }
-      }
-    } catch (e) {
-      if (kDebugMode) {
-        print(
-          "Error calling getDirections Firebase Function (TripViewerPage): $e",
-        );
-      }
-    }
-    return null;
-  }
 
   int _parseDurationString(String durationStr) {
     int travelMinutes = 0;
@@ -783,6 +782,7 @@ class _TripViewerPageState extends State<TripViewerPage> {
       getManeuverIconData: MapDisplayHelpers.getManeuverIconData,
       getTransitVehicleIcon: MapDisplayHelpers.getTransitVehicleIcon,
       stripHtmlIfNeeded: MapDisplayHelpers.stripHtmlIfNeeded,
+      currentDistanceUnit: _currentDistanceUnit, // Pass down
       primaryColor:
           Theme.of(
             context,
@@ -1102,6 +1102,7 @@ class _TripViewerPageState extends State<TripViewerPage> {
                   scheduleDetails: scheduleDetailsForExport,
                   routes: _routes,
                   getTravelModeIcon: MapDisplayHelpers.getTravelModeIcon,
+                  currentDistanceUnit: _currentDistanceUnit, // Pass down
                 ),
               ),
             ),

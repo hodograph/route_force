@@ -5,6 +5,8 @@ import 'package:route_force/models/location_stop.dart';
 import 'package:route_force/models/route_info.dart';
 import 'package:route_force/models/scheduled_stop_info.dart';
 import 'stop_details_content.dart';
+import 'package:route_force/enums/distance_unit.dart'; // Import DistanceUnit
+import 'package:route_force/utils/distance_utils.dart'; // Import DistanceUtils
 
 class StopListItem extends StatelessWidget {
   final LocationStop stop;
@@ -39,6 +41,7 @@ class StopListItem extends StatelessWidget {
   final List<LocationStop> allStops; // Needed for prevStop access in subtitle
   final String Function(int stopIndex) getStopOpeningHoursWarning;
   final Function(String stopId, String? notes) onUpdateStopNotes;
+  final DistanceUnit currentDistanceUnit; // Added
 
   const StopListItem({
     super.key,
@@ -66,6 +69,7 @@ class StopListItem extends StatelessWidget {
     required this.allStops,
     required this.getStopOpeningHoursWarning,
     required this.onUpdateStopNotes,
+    required this.currentDistanceUnit, // Added
   });
 
   @override
@@ -135,7 +139,12 @@ class StopListItem extends StatelessWidget {
                   if (routeOptions != null &&
                       routeOptions.isNotEmpty &&
                       selectedIdx < routeOptions.length) {
-                    durationText = '(${routeOptions[selectedIdx].duration})';
+                    final route = routeOptions[selectedIdx];
+                    final formattedDistance = DistanceUtils.formatDistance(
+                      route.distanceInMeters,
+                      currentDistanceUnit,
+                    );
+                    durationText = '(${route.duration} / $formattedDistance)';
                   }
 
                   return Row(
@@ -245,6 +254,7 @@ class StopListItem extends StatelessWidget {
             getTransitVehicleIconFunction: getTransitVehicleIconFunction,
             stripHtmlFunction: stripHtmlFunction,
             prevStop: index > 0 ? allStops[index - 1] : null,
+            currentDistanceUnit: currentDistanceUnit, // Pass down
             onUpdateStopNotes: onUpdateStopNotes,
           ),
         ],

@@ -7,6 +7,7 @@ import 'package:route_force/models/location_stop.dart';
 import 'package:route_force/models/route_info.dart';
 import 'package:route_force/models/scheduled_stop_info.dart';
 import 'stop_list_item.dart';
+import 'package:route_force/enums/distance_unit.dart'; // Import DistanceUnit
 
 class TripSheetContent extends StatelessWidget {
   final ScrollController? scrollController; // Made nullable
@@ -65,6 +66,7 @@ class TripSheetContent extends StatelessWidget {
   final Function(String tripDocId) onDeleteTrip;
   final String? tripOwnerId; // Added to identify the actual trip owner
 
+  final DistanceUnit currentDistanceUnit; // Added
   final Function(String stopId, String? notes) onUpdateStopNotes; // Added
   const TripSheetContent({
     super.key,
@@ -113,6 +115,7 @@ class TripSheetContent extends StatelessWidget {
     required this.isLoadingParticipants,
     required this.onUpdateStopNotes, // Added
     required this.tripOwnerId, // Added
+    required this.currentDistanceUnit, // Added
   });
 
   @override
@@ -412,6 +415,7 @@ class TripSheetContent extends StatelessWidget {
                           allStops: stops,
                           getStopOpeningHoursWarning:
                               getStopOpeningHoursWarningFunction, // Pass down
+                          currentDistanceUnit: currentDistanceUnit, // Pass down
                           onUpdateStopNotes: onUpdateStopNotes, // Pass down
                         );
                       },
